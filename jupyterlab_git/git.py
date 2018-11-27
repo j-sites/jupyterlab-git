@@ -41,27 +41,6 @@ class Git:
 
         return response
 
-    def remote_url(self, current_path):
-        p = subprocess.Popen(
-            ['git config --get remote.origin.url'],
-            shell=True,
-            stdout=PIPE,
-            stderr=PIPE,
-            cwd=os.path.join(self.root_dir, current_path),
-        )
-        _, error = p.communicate()
-
-        response = {
-            'code': p.returncode
-        }
-
-        if p.returncode != 0:
-            response['message'] = error.decode('utf-8').strip()
-        response['message'] = _.decode("utf-8")
-
-        return response
-
-
     def status(self, current_path):
         """
         Execute git status command & return the result.
@@ -230,56 +209,65 @@ class Git:
 
     def branch(self, current_path):
         """
-        Execute git branch -a command & return the result.
+        Execute 'git show-ref' command & return the result.
         """
-        p = Popen(
-            ["git", "branch", "-a"],
+        p = subprocess.Popen(
+            ['git', 'show-ref'],
             stdout=PIPE,
             stderr=PIPE,
             cwd=os.path.join(self.root_dir, current_path),
         )
-        my_output, my_error = p.communicate()
+        output, error = p.communicate()
         if p.returncode == 0:
-            result = []
-            line_array = my_output.decode("utf-8").splitlines()
-            """By comparing strings 'remotes/' to determine if a branch is
-            local or remote, should have better ways
-            """
-            for line_full in line_array:
-                line_cut = (line_full.split(" -> "),)
-                tag = None
-                current = False
-                remote = False
-                if len(line_cut[0]) > 1:
-                    tag = line_cut[0][1]
-                line = (line_cut[0][0],)
-                if line_full[0] == "*":
-                    current = True
-                if (len(line_full) >= 10) and (line_full[2:10] == "remotes/"):
-                    remote = True
-                    result.append(
-                        {
-                            "current": current,
-                            "remote": remote,
-                            "name": line[0][10:],
-                            "tag": tag,
-                        }
-                    )
-                else:
-                    result.append(
-                        {
-                            "current": current,
-                            "remote": remote,
-                            "name": line_full[2:],
-                            "tag": tag,
-                        }
-                    )
-            return {"code": p.returncode, "branches": result}
+            results = []
+            try:
+                current_branch = self.get_current_branch(current_path)
+                for line in output.decode('utf-8').splitlines():
+                    # The format for git show-ref is '<SHA-1 ID> <space> <reference name>'
+                    # For this method we are only interested in reference name.
+                    # Reference : https://git-scm.com/docs/git-show-ref#_output
+                    commit_sha = line.strip().split()[0].strip()
+                    reference_name = line.strip().split()[1].strip()
+                    if self._is_branch(reference_name):
+                        branch_name = self._get_branch_name(reference_name)
+                        is_current_branch = self._is_current_branch(branch_name, current_branch)
+                        is_remote_branch = self._is_remote_branch(reference_name)
+                        upstream_branch_name = None
+                        if not is_remote_branch:
+                            upstream_branch_name = self.get_upstream_branch(current_path, branch_name)
+                        tag = self._get_tag(current_path, commit_sha)
+                        results.append({
+                            'is_current_branch': is_current_branch,
+                            'is_remote_branch': is_remote_branch,
+                            'name': branch_name,
+                            'upstream': upstream_branch_name,
+                            'tag': tag,
+                        })
+                
+                # Remote branch is seleted use 'git branch -a' as fallback machanism 
+                # to get add detached head on remote branch to preserve older functionality
+                # TODO : Revisit this to checkout new local branch with same name as remote 
+                # when the remote branch is seleted, VS Code git does the same thing.
+                if current_branch == 'HEAD':
+                    results.append({
+                        'is_current_branch': True,
+                        'is_remote_branch': False,
+                        'name': self._get_detached_head_name(current_path),
+                        'upstream': None,
+                        'tag': None,
+                    })
+                return {'code': p.returncode, 'branches': results}
+            except Exception as downstream_error:
+                return {
+                    'code': p.returncode,
+                    'command': 'git show-ref',
+                    'message': str(downstream_error),
+                }
         else:
             return {
-                "code": p.returncode,
-                "command": "git branch -a",
-                "message": my_error.decode("utf-8"),
+                'code': p.returncode,
+                'command': 'git show-ref',
+                'message': error.decode('utf-8'),
             }
 
     def show_top_level(self, current_path):
@@ -454,45 +442,51 @@ class Git:
         )
         return my_output
 
-    def pull(self, origin, master, curr_fb_path):
+    def pull(self, curr_fb_path):
         """
-        Execute git pull <branch1> <branch2> command & return the result.
+        Execute git pull --no-commit.  Disables prompts for the password to avoid the terminal hanging while waiting
+        for auth.
         """
-        p = Popen(
-            ["git", "pull", origin, master, "--no-commit"],
-            stdout=PIPE,
-            stderr=PIPE,
-            cwd=os.path.join(self.root_dir, curr_fb_path),
-        )
-        my_output, my_error = p.communicate()
-        if p.returncode == 0:
-            return {"code": p.returncode}
-        else:
-            return {
-                "code": p.returncode,
-                "command": "git pull " + origin + " " + master + " --no-commit",
-                "message": my_error.decode("utf-8"),
-            }
 
-    def push(self, origin, master, curr_fb_path):
-        """
-        Execute git push <branch1> <branch2> command & return the result.
-        """
-        p = Popen(
-            ["git", "push", origin, master],
+        p = subprocess.Popen(
+            ['GIT_TERMINAL_PROMPT=0 git pull --no-commit'],
+            shell=True,
             stdout=PIPE,
             stderr=PIPE,
             cwd=os.path.join(self.root_dir, curr_fb_path),
         )
-        my_output, my_error = p.communicate()
-        if p.returncode == 0:
-            return {"code": p.returncode}
-        else:
-            return {
-                "code": p.returncode,
-                "command": "git push " + origin + " " + master,
-                "message": my_error.decode("utf-8"),
-            }
+        _, error = p.communicate()
+
+        response = {
+            'code': p.returncode
+        }
+
+        if p.returncode != 0:
+            response['message'] = error.decode('utf-8').strip()
+
+        return response
+
+    def push(self, remote, branch, curr_fb_path):
+        """
+        Execute `git push $UPSTREAM $BRANCH`. The choice of upstream and branch is up to the caller.
+        """
+        p = subprocess.Popen(
+            ['GIT_TERMINAL_PROMPT=0 git push {} {}'.format(remote, branch)],
+            shell=True,
+            stdout=PIPE,
+            stderr=PIPE,
+            cwd=os.path.join(self.root_dir, curr_fb_path),
+        )
+        _, error = p.communicate()
+
+        response = {
+            'code': p.returncode
+        }
+
+        if p.returncode != 0:
+            response['message'] = error.decode('utf-8').strip()
+
+        return response
 
     def init(self, current_path):
         """
@@ -530,7 +524,7 @@ class Git:
         raise ValueError(
             'Reference [{}] is not a valid branch.', branch_reference)
 
-    def _get_current_branch(self, current_path):
+    def get_current_branch(self, current_path):
         """Execute 'git rev-parse --abbrev-ref HEAD' to
         check if given branch is current branch
         """
@@ -549,7 +543,7 @@ class Git:
                 error.decode('utf-8'),
                 ' '.join(command)
             ))
-
+    
     def _get_detached_head_name(self, current_path):
         """Execute 'git branch -a' to get current branch details in case of detached HEAD
         """
@@ -572,7 +566,7 @@ class Git:
                 ' '.join(command)
             ))
 
-    def _get_upstream_branch(self, current_path, branch_name):
+    def get_upstream_branch(self, current_path, branch_name):
         """Execute 'git rev-parse --abbrev-ref branch_name@{upstream}' to get
         upstream branch name tracked by given local branch.
         Reference : https://git-scm.com/docs/git-rev-parse#git-rev-parse-emltbranchnamegtupstreamemegemmasterupstreamememuem
@@ -594,13 +588,13 @@ class Git:
                 error.decode('utf-8'),
                 ' '.join(command)
             ))
-
+    
     def _get_tag(self, current_path, commit_sha):
         """Execute 'git describe commit_sha' to get
         nearest tag associated with lastest commit in branch.
         Reference : https://git-scm.com/docs/git-describe#git-describe-ltcommit-ishgt82308203
         """
-        command = ['git', 'describe', commit_sha]
+        command = ['git', 'describe', '--tags', commit_sha]
         p = subprocess.Popen(
             command,
             stdout=PIPE,
@@ -611,6 +605,8 @@ class Git:
         if p.returncode == 0:
             return output.decode('utf-8').strip()
         elif "fatal: No tags can describe '{}'.".format(commit_sha) in error.decode('utf-8'):
+            return None
+        elif "fatal: No names found" in error.decode('utf-8'):
             return None
         else:
             raise Exception('Error [{}] occurred while executing [{}] command to get nearest tag associated with branch.'.format(

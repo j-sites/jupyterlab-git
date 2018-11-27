@@ -34,14 +34,6 @@ class GitCloneHandler(GitHandler):
         self.finish(json.dumps(response))
 
 
-class GitRemoteUrlHandler(GitHandler):
-    def post(self):
-        data = json.loads(self.request.body.decode('utf-8'))
-        response = self.git.remote_url(data['current_path'])
-        self.finish(json.dumps(response))
-
-
-
 class GitAllHistoryHandler(GitHandler):
     """
     Parent handler for all four history/status git commands:
@@ -324,22 +316,36 @@ class GitCommitHandler(GitHandler):
         self.finish(my_output)
 
 
+class GitUpstreamHandler(GitHandler):
+    def post(self):
+        """
+        Handler for the `git rev-parse --abbrev-ref $CURRENT_BRANCH_NAME@{upstream}` on the repo. Used to check if there
+        is a upstream branch defined for the current Git repo (and a side-effect is disabling the Git push/pull actions)
+
+        Input format:
+            {
+              'current_path': 'current_file_browser_path',
+            }
+        """
+        current_path = self.get_json_body()['current_path']
+        current_branch = self.git.get_current_branch(current_path)
+        upstream = self.git.get_upstream_branch(current_path, current_branch)
+        self.finish(json.dumps({
+            'upstream': upstream
+        }))
+
+
 class GitPullHandler(GitHandler):
     """
-    Handler for 'git pull <first-branch> <second-branch>'. Pulls files from a remote branch.
+    Handler for 'git pull'. Pulls files from a remote branch.
     """
 
     def post(self):
         """
         POST request handler, pulls files from a remote branch to your current branch.
         """
-        data = self.get_json_body()
-        origin = data["origin"]
-        master = data["master"]
-        curr_fb_path = data["curr_fb_path"]
-        my_output = self.git.pull(origin, master, curr_fb_path)
-        self.finish(my_output)
-        print("You Pulled")
+        output = self.git.pull(self.get_json_body()['current_path'])
+        self.finish(json.dumps(output))
 
 
 class GitPushHandler(GitHandler):
@@ -351,15 +357,32 @@ class GitPushHandler(GitHandler):
     def post(self):
         """
         POST request handler,
-        pushes comitted files from your current branch to a remote branch
+        pushes committed files from your current branch to a remote branch
         """
-        data = self.get_json_body()
-        origin = data["origin"]
-        master = data["master"]
-        curr_fb_path = data["curr_fb_path"]
-        my_output = self.git.push(origin, master, curr_fb_path)
-        self.finish(my_output)
-        print("You Pushed")
+        current_path = self.get_json_body()['current_path']
+
+        current_local_branch = self.git.get_current_branch(current_path)
+        current_upstream_branch = self.git.get_upstream_branch(current_path, current_local_branch)
+
+        if current_upstream_branch and current_upstream_branch.strip():
+            upstream = current_upstream_branch.split('/')
+            if len(upstream) == 1:
+                # If upstream is a local branch
+                remote = '.'
+                branch = ':'.join(['HEAD', upstream[0]])
+            else:
+                # If upstream is a remote branch
+                remote = upstream[0]
+                branch = ':'.join(['HEAD', upstream[1]])
+
+            response = self.git.push(remote, branch, current_path)
+
+        else:
+            response = {
+                'code': 128,
+                'message': 'fatal: The current branch {} has no upstream branch.'.format(current_local_branch)
+            }
+        self.finish(json.dumps(response))
 
 
 class GitInitHandler(GitHandler):
@@ -417,7 +440,7 @@ def setup_handlers(web_app):
         ("/git/all_history", GitAllHistoryHandler),
         ("/git/add_all_untracked", GitAddAllUntrackedHandler),
         ("/git/clone", GitCloneHandler),
-        ("/git/remote_url", GitRemoteUrlHandler)
+        ("/git/upstream", GitUpstreamHandler)
     ]
 
     # add the baseurl to our paths
