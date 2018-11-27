@@ -34,6 +34,13 @@ class GitCloneHandler(GitHandler):
         self.finish(json.dumps(response))
 
 
+class GitRemoteUrlHandler(GitHandler):
+    def post(self):
+        data = json.loads(self.request.body.decode('utf-8'))
+        response = self.git.remote_url(data['current_path'])
+        self.finish(json.dumps(response))
+
+
 class GitAllHistoryHandler(GitHandler):
     """
     Parent handler for all four history/status git commands:
@@ -440,7 +447,8 @@ def setup_handlers(web_app):
         ("/git/all_history", GitAllHistoryHandler),
         ("/git/add_all_untracked", GitAddAllUntrackedHandler),
         ("/git/clone", GitCloneHandler),
-        ("/git/upstream", GitUpstreamHandler)
+        ("/git/upstream", GitUpstreamHandler),
+        ("/git/remote_url", GitRemoteUrlHandler)
     ]
 
     # add the baseurl to our paths

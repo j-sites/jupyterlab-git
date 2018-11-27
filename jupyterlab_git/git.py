@@ -41,6 +41,27 @@ class Git:
 
         return response
 
+
+    def remote_url(self, current_path):
+        p = subprocess.Popen(
+            ['git config --get remote.origin.url'],
+            shell=True,
+            stdout=PIPE,
+            stderr=PIPE,
+            cwd=os.path.join(self.root_dir, current_path),
+        )
+        _, error = p.communicate()
+
+        response = {
+            'code': p.returncode
+        }
+
+        if p.returncode != 0:
+            response['message'] = error.decode('utf-8').strip()
+        response['message'] = _.decode("utf-8")
+
+        return response
+
     def status(self, current_path):
         """
         Execute git status command & return the result.
@@ -209,65 +230,56 @@ class Git:
 
     def branch(self, current_path):
         """
-        Execute 'git show-ref' command & return the result.
+        Execute git branch -a command & return the result.
         """
-        p = subprocess.Popen(
-            ['git', 'show-ref'],
+        p = Popen(
+            ["git", "branch", "-a"],
             stdout=PIPE,
             stderr=PIPE,
             cwd=os.path.join(self.root_dir, current_path),
         )
-        output, error = p.communicate()
+        my_output, my_error = p.communicate()
         if p.returncode == 0:
-            results = []
-            try:
-                current_branch = self.get_current_branch(current_path)
-                for line in output.decode('utf-8').splitlines():
-                    # The format for git show-ref is '<SHA-1 ID> <space> <reference name>'
-                    # For this method we are only interested in reference name.
-                    # Reference : https://git-scm.com/docs/git-show-ref#_output
-                    commit_sha = line.strip().split()[0].strip()
-                    reference_name = line.strip().split()[1].strip()
-                    if self._is_branch(reference_name):
-                        branch_name = self._get_branch_name(reference_name)
-                        is_current_branch = self._is_current_branch(branch_name, current_branch)
-                        is_remote_branch = self._is_remote_branch(reference_name)
-                        upstream_branch_name = None
-                        if not is_remote_branch:
-                            upstream_branch_name = self.get_upstream_branch(current_path, branch_name)
-                        tag = self._get_tag(current_path, commit_sha)
-                        results.append({
-                            'is_current_branch': is_current_branch,
-                            'is_remote_branch': is_remote_branch,
-                            'name': branch_name,
-                            'upstream': upstream_branch_name,
-                            'tag': tag,
-                        })
-                
-                # Remote branch is seleted use 'git branch -a' as fallback machanism 
-                # to get add detached head on remote branch to preserve older functionality
-                # TODO : Revisit this to checkout new local branch with same name as remote 
-                # when the remote branch is seleted, VS Code git does the same thing.
-                if current_branch == 'HEAD':
-                    results.append({
-                        'is_current_branch': True,
-                        'is_remote_branch': False,
-                        'name': self._get_detached_head_name(current_path),
-                        'upstream': None,
-                        'tag': None,
-                    })
-                return {'code': p.returncode, 'branches': results}
-            except Exception as downstream_error:
-                return {
-                    'code': p.returncode,
-                    'command': 'git show-ref',
-                    'message': str(downstream_error),
-                }
+            result = []
+            line_array = my_output.decode("utf-8").splitlines()
+            """By comparing strings 'remotes/' to determine if a branch is
+            local or remote, should have better ways
+            """
+            for line_full in line_array:
+                line_cut = (line_full.split(" -> "),)
+                tag = None
+                current = False
+                remote = False
+                if len(line_cut[0]) > 1:
+                    tag = line_cut[0][1]
+                line = (line_cut[0][0],)
+                if line_full[0] == "*":
+                    current = True
+                if (len(line_full) >= 10) and (line_full[2:10] == "remotes/"):
+                    remote = True
+                    result.append(
+                        {
+                            "current": current,
+                            "remote": remote,
+                            "name": line[0][10:],
+                            "tag": tag,
+                        }
+                    )
+                else:
+                    result.append(
+                        {
+                            "current": current,
+                            "remote": remote,
+                            "name": line_full[2:],
+                            "tag": tag,
+                        }
+                    )
+            return {"code": p.returncode, "branches": result}
         else:
             return {
-                'code': p.returncode,
-                'command': 'git show-ref',
-                'message': error.decode('utf-8'),
+                "code": p.returncode,
+                "command": "git branch -a",
+                "message": my_error.decode("utf-8"),
             }
 
     def show_top_level(self, current_path):
