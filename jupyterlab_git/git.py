@@ -24,7 +24,7 @@ class Git:
         :return: response with status code and error message.
         """
         p = subprocess.Popen(
-            ['GIT_TERMINAL_PROMPT=0 git clone {}'.format(unquote(repo_url))],
+            ['GIT_TERMINAL_PROMPT=0 git clone {} .'.format(unquote(repo_url))],
             shell=True,
             stdout=PIPE,
             stderr=PIPE,
